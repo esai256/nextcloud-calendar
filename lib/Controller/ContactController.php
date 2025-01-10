@@ -145,15 +145,20 @@ class ContactController extends Controller {
 		return new JSONResponse($contacts);
 	}
 
-	#[NoAdminRequired]
-	public function getContactGroupMembers(string $groupName): JSONResponse {
+	/**
+	 * Get members of a contact group by group name
+	 *
+	 * @param string $groupName Name of the group to search for members
+	 * @return array List of group members
+	 */
+	private function fetchGroupMembersByName(string $groupName): array {
 		if (!$this->contactsManager->isEnabled()) {
-			return new JSONResponse();
+			return [];
 		}
 
-		$groupmembers = $this->contactsManager->search($groupName, ['CATEGORIES']);
+		$groupMembers = $this->contactsManager->search($groupName, ['CATEGORIES']);
 		$contacts = [];
-		foreach ($groupmembers as $r) {
+		foreach ($groupMembers as $r) {
 			if (!in_array($groupName, explode(',', $r['CATEGORIES']), true)) {
 				continue;
 			}
@@ -176,7 +181,21 @@ class ContactController extends Controller {
 				'member' => 'mailto:' . urlencode($groupName) . '@group',
 			];
 		}
-		return new JSONResponse($contacts);
+
+		return $contacts;
+	}
+
+	/**
+	 * Retrieve members of a contact group by group name
+	 *
+	 * @param string $groupName Name of the group to search for members
+	 * @return JSONResponse
+	 *
+	 * @NoAdminRequired
+	 */
+	#[NoAdminRequired]
+	public function getContactGroupMembers(string $groupName): JSONResponse {
+		return new JSONResponse($this->fetchGroupMembersByName($groupName));
 	}
 
 	/**
@@ -214,24 +233,31 @@ class ContactController extends Controller {
 		foreach ($circleMembers as $circleMember) {
 			if ($circleMember->isLocal()) {
 
+				$circleMemberType = $circleMember->getUserType();
 				$circleMemberUserId = $circleMember->getUserId();
 
-				$user = $this->userManager->get($circleMemberUserId);
+				if ($circleMemberType == \OCA\CIrcles\Api\v1\Circles::TYPE_USER) {
+					$user = $this->userManager->get($circleMemberUserId);
 
-				if ($user === null) {
-					throw new ServiceException('Could not find organizer');
+					if ($user === null) {
+						$this->logger->warning('Could not find circle member with id "{userId}"', ['userId' => $circleMemberUserId]);
+					} else {
+						$contacts[] = [
+							'commonName' => $circleMember->getDisplayName(),
+							'calendarUserType' => 'INDIVIDUAL',
+							'email' => $user->getEMailAddress(),
+							'isUser' => true,
+							'avatar' => $circleMemberUserId,
+							'hasMultipleEMails' => false,
+							'dropdownName' => $circleMember->getDisplayName(),
+							'member' => 'mailto:circle+' . $circleId . '@' . $circleMember->getInstance(),
+						];
+					}
+				} else if ($circleMemberType === \OCA\Circles\Api\v1\Circles::TYPE_GROUP) {
+					array_push($contacts, ...$this->fetchGroupMembersByName($circleMemberUserId));
+				} else {
+					$this->logger->warning('Circle members of type "{type}" are not supported as calendar event participants', ['type' => $circleMemberType]);
 				}
-
-				$contacts[] = [
-					'commonName' => $circleMember->getDisplayName(),
-					'calendarUserType' => 'INDIVIDUAL',
-					'email' => $user->getEMailAddress(),
-					'isUser' => true,
-					'avatar' => $circleMemberUserId,
-					'hasMultipleEMails' => false,
-					'dropdownName' => $circleMember->getDisplayName(),
-					'member' => 'mailto:circle+' . $circleId . '@' . $circleMember->getInstance(),
-				];
 			}
 		}
 
